@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from IPython.display import HTML
 from matplotlib.animation import FuncAnimation
 from matplotlib.gridspec import GridSpec
 
@@ -22,8 +23,6 @@ class IsingSim:
         self.magnetization = 0
         self.m_acc = 0
         self.m2_acc = 0
-        self.m_avg = 0
-        self.m2_avg = 0
         self.accepted_moves = 0
         self.temperature = 0
 
@@ -38,6 +37,13 @@ class IsingSim:
         self.rand_pts = np.random.randint(self.L, size=(self.nrand, 2))
 
         self.init()
+
+    def reset_acc(self):
+        self.sys_energy_acc = 0
+        self.dem_energy_acc = 0
+        self.m_acc = 0
+        self.m2_acc = 0
+        self.mcs = 0
 
     def init(self):
         tries = 0
@@ -55,8 +61,6 @@ class IsingSim:
             tries += 1
         self.sys_energy = energy
         self.magnetization = mag
-        self.m_avg = mag / self.N
-        self.m2_avg = mag * mag / self.N
 
     def step(self):
         for i in range(self.N):
@@ -77,8 +81,6 @@ class IsingSim:
         self.temperature = 4.0 / np.log(
             1 + (4 * self.mcs * self.N / self.dem_energy_acc)
         )
-        self.m_avg = self.m_acc / self.N
-        self.m2_avg = self.m2_acc / self.N
 
     def get_delta(self, pt):
         # (-1, 0) and (0, -1) allow periodic wrapping from the left and top
@@ -99,14 +101,11 @@ class IsingSim:
         return tuple(pt)
 
 
-class SimAnimation:
-    def __init__(self, sim, interval):
+class SimPlotter:
+    def __init__(self, sim, fig):
         self.sim = sim
+        self.fig = fig
         self.im = None
-        self.ani = None
-        self.fig = plt.figure()
-        self.interval = interval
-        self.paused = False
         self.steps = []
         self.data = {
             "sys_energy": [],
@@ -187,8 +186,35 @@ class SimAnimation:
         self.tmp_ax.set_xlim(-1, step)
         return self.artists
 
+
+class SimAnimation:
+    def __init__(
+        self,
+        sim,
+        interval,
+        artist_class,
+        max_iter=None,
+        figsize=None,
+        notebook=False,
+    ):
+        self.notebook = notebook
+        self.max_iter = max_iter
+        self.sim = sim
+        self.im = None
+        self.ani = None
+        self.fig = plt.figure(figsize=figsize)
+        self.interval = interval
+        self.paused = False
+        self.artist = artist_class(sim, self.fig)
+
+    def init(self):
+        return self.artist.init()
+
+    def update(self, step):
+        return self.artist.update(step)
+
     def on_click(self, event):
-        """Toggle play/pause with space bar"""
+        """Toggle play/pause with space bar. Handy for non-jupyter runs."""
         if event.key != " ":
             return
         if self.paused:
@@ -203,13 +229,22 @@ class SimAnimation:
         self.ani = FuncAnimation(
             self.fig,
             self.update,
+            frames=self.max_iter,
             init_func=self.init,
             interval=self.interval,
         )
-        plt.show()
+        if not self.notebook:
+            plt.show()
+        else:
+            return HTML(self.ani.to_html5_video())
+
+
+def run_sim(sim, iters):
+    for _ in range(iters):
+        sim.step()
 
 
 if __name__ == "__main__":
-    sim = IsingSim(70, -200)
-    ani = SimAnimation(sim, 1)
+    sim = IsingSim(50, 100)
+    ani = SimAnimation(sim, 100, SimPlotter)
     ani.run()
