@@ -98,15 +98,6 @@ class IsingSim:
         self.irand += 1
         return tuple(pt)
 
-    def get_state(self):
-        return (
-            self.lattice,
-            self.sys_energy,
-            self.dem_energy,
-            self.magnetization,
-            self.temperature,
-        )
-
 
 class SimAnimation:
     def __init__(self, sim, interval):
