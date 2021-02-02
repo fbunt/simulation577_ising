@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
+from matplotlib.gridspec import GridSpec
 
 
 UP = 1
@@ -21,6 +22,8 @@ class IsingSim:
         self.magnetization = 0
         self.m_acc = 0
         self.m2_acc = 0
+        self.m_avg = 0
+        self.m2_avg = 0
         self.accepted_moves = 0
         self.temperature = 0
 
@@ -51,6 +54,9 @@ class IsingSim:
                 mag += 2 * spin
             tries += 1
         self.sys_energy = energy
+        self.magnetization = mag
+        self.m_avg = mag / self.N
+        self.m2_avg = mag * mag / self.N
 
     def step(self):
         for i in range(self.N):
@@ -69,8 +75,10 @@ class IsingSim:
             self.m2_acc += self.magnetization * self.magnetization
         self.mcs += 1
         self.temperature = 4.0 / np.log(
-            1 + 4 / (self.dem_energy_acc / self.mcs * self.N)
+            1 + (4 * self.mcs * self.N / self.dem_energy_acc)
         )
+        self.m_avg = self.m_acc / self.N
+        self.m2_avg = self.m2_acc / self.N
 
     def get_delta(self, pt):
         # (-1, 0) and (0, -1) allow periodic wrapping from the left and top
@@ -103,36 +111,90 @@ class IsingSim:
 class SimAnimation:
     def __init__(self, sim, interval):
         self.sim = sim
-        self.fig, self.axs = plt.subplots(2, 2, constrained_layout=True)
         self.im = None
         self.ani = None
+        self.fig = plt.figure()
         self.interval = interval
         self.paused = False
-        self.sys_eng = []
-        self.dem_eng = []
-        self.mag = []
-        self.temp = []
-
-    def init(self):
-        lattice, seng, deng, mag, temp = self.sim.get_state()
-        self.sys_eng.append(seng)
-        self.dem_eng.append(deng)
-        self.mag.append(mag)
-        self.temp.append(temp)
-        self.im = self.axs[0, 0].imshow(
-            lattice,
+        self.steps = []
+        self.data = {
+            "sys_energy": [],
+            "dem_energy": [],
+            "mag": [],
+            "tmp": [],
+        }
+        self.min_max = {
+            "sys_energy": [self.sim.sys_energy, self.sim.sys_energy],
+            "dem_energy": [self.sim.dem_energy, self.sim.dem_energy],
+            "mag": [self.sim.magnetization, self.sim.magnetization],
+            "tmp": [self.sim.temperature, self.sim.temperature],
+        }
+        gs = GridSpec(2, 2)
+        self.im_ax = self.fig.add_subplot(gs[0, 0])
+        self.mag_ax = self.fig.add_subplot(gs[1, 0])
+        self.sys_ax = self.fig.add_subplot(gs[0, 1])
+        self.tmp_ax = self.fig.add_subplot(gs[1, 1])
+        self.im = self.im_ax.imshow(
+            np.full_like(self.sim.lattice, UP),
             interpolation="none",
             animated=True,
             cmap="gray",
+            vmin=DOWN,
+            vmax=UP,
         )
-        plt.axis("off")
-        return (self.im,)
+        (self.mag_line,) = self.mag_ax.plot(self.steps, self.data["mag"])
+        self.mag_ax.set_title("Magnetization")
+        self.mag_ax.set_xlabel("Steps")
+        (self.sys_line,) = self.sys_ax.plot(
+            self.steps, self.data["dem_energy"]
+        )
+        self.sys_ax.set_title("System Energy")
+        self.sys_ax.set_xlabel("Steps")
+        (self.tmp_line,) = self.tmp_ax.plot(self.steps, self.data["tmp"])
+        self.tmp_ax.set_title("Temperature")
+        self.tmp_ax.set_xlabel("Steps")
+        self.axs = (self.mag_ax, self.sys_ax, self.tmp_ax)
+        for ax in self.axs:
+            ax.grid()
+        self.artists = [self.im, self.mag_line, self.sys_line, self.tmp_line]
+        plt.tight_layout()
 
-    def update(self, *args):
+    def _update_data(self, k, v):
+        self.data[k].append(v)
+        mm = self.min_max[k]
+        if v < mm[0]:
+            mm[0] = v
+        if v > mm[1]:
+            mm[1] = v
+
+    def init(self):
+        return self.artists
+
+    def update(self, step):
+        self.steps.append(step)
         self.sim.step()
-        lattice, seng, deng, mag, temp = self.sim.get_state()
-        self.im.set_data(lattice)
-        return (self.im,)
+        self._update_data("sys_energy", self.sim.sys_energy)
+        self._update_data("dem_energy", self.sim.dem_energy)
+        self._update_data("mag", self.sim.magnetization)
+        self._update_data("tmp", self.sim.temperature)
+        if step == 1:
+            # Drop initial zero values
+            tmp = self.data["tmp"]
+            self.min_max["tmp"] = [min(tmp), max(tmp)]
+
+        self.im.set_data(self.sim.lattice)
+        self.mag_line.set_data(self.steps, self.data["mag"])
+        self.sys_line.set_data(self.steps, self.data["sys_energy"])
+        self.tmp_line.set_data(self.steps, self.data["tmp"])
+        self.mag_ax.set_ylim(*self.min_max["mag"])
+        # Add buffer so that data isn't obscured by axes lines
+        mm = self.min_max["sys_energy"]
+        self.sys_ax.set_ylim(mm[0] - 1, mm[1] + 1)
+        self.tmp_ax.set_ylim(*self.min_max["tmp"])
+        self.mag_ax.set_xlim(-1, step)
+        self.sys_ax.set_xlim(-1, step)
+        self.tmp_ax.set_xlim(-1, step)
+        return self.artists
 
     def on_click(self, event):
         """Toggle play/pause with space bar"""
@@ -152,11 +214,11 @@ class SimAnimation:
             self.update,
             init_func=self.init,
             interval=self.interval,
-            blit=True,
         )
         plt.show()
 
 
 if __name__ == "__main__":
-    sim = IsingSim(50, 100)
-    SimAnimation(sim, 1).run()
+    sim = IsingSim(70, -200)
+    ani = SimAnimation(sim, 1)
+    ani.run()
